@@ -1,0 +1,1 @@
+"""AiQuantSys application package."""
