@@ -3,10 +3,12 @@ from datetime import datetime
 from fastapi import APIRouter
 
 from app.config import get_settings
+from us_stock.api.broker_routes import router as broker_router
 from us_stock.calendar.market_calendar import MarketCalendarService
 from us_stock.calendar.session_state import MarketSessionState
 
 router = APIRouter()
+router.include_router(broker_router)
 
 
 @router.get("/session", response_model=MarketSessionState)
