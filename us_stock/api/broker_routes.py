@@ -2,9 +2,19 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.config import get_settings
 from us_stock.brokers.base import BrokerConfigurationError, BrokerError
 from us_stock.brokers.factory import create_broker
-from us_stock.brokers.models import AccountSnapshot, BarSnapshot, PositionSnapshot, QuoteSnapshot
+from us_stock.brokers.models import (
+    AccountSnapshot,
+    BarSnapshot,
+    OrderRequest,
+    OrderResult,
+    PositionSnapshot,
+    QuoteSnapshot,
+)
+from us_stock.calendar.market_calendar import MarketCalendarService
+from us_stock.execution.order_validator import BasicOrderValidator
 
 router = APIRouter(prefix="/broker", tags=["broker"])
 
@@ -68,6 +78,28 @@ async def get_broker_bars(
     try:
         adapter = create_broker(broker)
         return await adapter.get_bars(symbol.upper(), timeframe, start, end, limit=limit)
+    except BrokerConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except BrokerError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        if adapter:
+            await adapter.close()
+
+
+@router.post("/orders/paper", response_model=OrderResult)
+async def submit_paper_order(order: OrderRequest, broker: str = "alpaca") -> OrderResult:
+    settings = get_settings()
+    calendar = MarketCalendarService(timezone=settings.default_timezone)
+    session_state = calendar.classify()
+    validation = BasicOrderValidator(settings).validate(order, session_state)
+    if not validation.accepted:
+        raise HTTPException(status_code=400, detail={"reject_reasons": validation.reject_reasons})
+
+    adapter = None
+    try:
+        adapter = create_broker(broker, settings=settings)
+        return await adapter.submit_order(order)
     except BrokerConfigurationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except BrokerError as exc:
